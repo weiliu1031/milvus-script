@@ -16,6 +16,21 @@ from pymilvus import (
 )
 
 
+def delete(name: str, expr: str):
+    connections.connect()
+    c = Collection(name)
+
+    print(f"delete {expr}")
+    c.delete(expr)
+    c.flush()
+
+    c.delete(expr)
+    c.flush()
+
+    c.delete(expr)
+    c.flush
+
+
 def prepare_collection(name: str, dim: int, recreate_if_exist: bool=False):
     connections.connect()
 
@@ -46,7 +61,7 @@ class MilvusMultiThreadingInsert:
         self.dim = dim
         self.total_count = total_count
         self.num_per_batch = num_per_batch
-        self.batchs = [i for i in range(batch_count)]
+        self.batchs = list(range(batch_count))
 
     def connect(self, uri: str):
         connections.connect(uri=uri)
@@ -60,7 +75,7 @@ class MilvusMultiThreadingInsert:
         print(f"No.{number:2}: Start inserting entities")
         rng = np.random.default_rng(seed=number)
         entities = [
-            [i for i in range(self.num_per_batch*number, self.num_per_batch*(number+1))],
+            list(range(self.num_per_batch*number, self.num_per_batch*(number+1))),
             rng.random(self.num_per_batch).tolist(),
             rng.random((self.num_per_batch, self.dim)),
         ]
@@ -78,8 +93,9 @@ class MilvusMultiThreadingInsert:
         self._insert_all_batches()
         duration = time.time() - start_time
         print(f'Inserted {len(self.batchs)} batches of entities in {duration} seconds')
-        print(f"Expected num_entities: {self.total_count}. \
-                Acutal num_entites: {self.get_thread_local_collection().num_entities}")
+        self.get_thread_local_collection().flush()
+        print(f"Inserted num_entities: {self.total_count}. \
+                Actual num_entites: {self.get_thread_local_collection().num_entities}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -95,3 +111,5 @@ if __name__ == "__main__":
     mp_insert = MilvusMultiThreadingInsert(flags.collection, 100_000, 5000, flags.dim)
     mp_insert.connect(uri)
     mp_insert.run()
+
+    delete()
