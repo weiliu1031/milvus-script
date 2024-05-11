@@ -28,21 +28,19 @@ def generate_segments(dist: SegmentDistribution):
         raise ValueError(msg)
 
     c = Collection(dist.collection_name)
-    if c.num_entities != 0:
-        msg = f"Collection {dist.collection_name} has {c.num_entities} entities, please provide an empty collection"
-        raise ValueError(msg)
+    #  if c.num_entities != 0:
+    #      msg = f"Collection {dist.collection_name} has {c.num_entities} entities, please provide an empty collection"
+    #      raise ValueError(msg)
 
     pks = []
     for size in dist.size_dist:
         pks.append(generate_one_segment(c, size))
-        print(f"generated {c.num_entities} entities for size: {size}")
 
     return pks
 
 
 def generate_one_segment(c: Collection, size: int) -> list:
-    #  count = estimate_count_by_size(size, c.schema)
-    count  =1
+    count = estimate_count_by_size(size, c.schema)
     print(f"generate {count} entities for size: {size}")
     data = gen_data_by_schema(c.schema, count)
 
@@ -77,7 +75,7 @@ def gen_data_by_schema(schema: pymilvus.CollectionSchema, count: int) -> list:
     for fs in schema.fields:
         if fs.dtype == DataType.INT64:
             if fs.is_primary and not fs.auto_id:
-                data.append([uuid.uuid1().int >> 64  for _ in range(count)])
+                data.append([uuid.uuid1().int >> 65  for _ in range(count)])
             else:
                 data.append(list(range(count)))
 
