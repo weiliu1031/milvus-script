@@ -1,0 +1,44 @@
+Compaction Trigger
+
+Any Segments(Pseg) Will Generate Compaction Plans if:
+============
+
+1. deltaLogCount > SingleCompactionDeltalogMaxNum(dataCoord.compaction.single.deltalog.maxnum)
+
+2. expireEnabled &&  totalExpiredRows/totalRows >= SingleCompactionRatioThreshold(dataCoord.compaction.single.ratio.threshold)
+
+3. expireEnabled && totalExpiredSize > SingleCompactionExpiredLogMaxSize(dataCoord.compaction.single.expiredlog.maxsize)
+
+4. deletedRows / totalRows >= SingleCompactionRatioThreshold(dataCoord.compaction.single.ratio.threshold)
+
+5. deletedSize > SingleCompactionDeletedLogMaxSize(dataCoord.compaction.single.deltalog.maxsize)
+
+6. AutoUpgradeSegmentIndex = True
+
+7. triggered by ManualCompaction
+
+
+
+Small Segments(Sseg) Will Generate Compaction Plans if:
+==============
+Sseg: segmentSize <= expectedSize * SegmentSmallProportion(dataCoord.segment.smallProportion)[by default <= 512MB]
+
+1. They can fit into [Pseg] by segmentMaxSize/segmentMaxRowCount
+2. They can group together and count >= MinSegmentToMerge(dataCoord.compaction.min.segment)
+3. They can group together and targetSize > expectedSize(dataCoord.segment.maxSize) * SegmentCompactabelProportion(dataCoord.segment.smallProportion)
+4. They can be squeezed into exsisting compaction plans if totalSize <= expectedSize * SegmentExpansionRate(dataCoord.segment.expansionRate)
+5. They can be grouped with [NPseg]
+
+
+NonPlanedSegments(NPseg) Will Generate Compaction Plans if:
+========================
+1. There're small segments left to compact and totalSize <= expectedSize * SegmentExpansionRate(dataCoord.segment.expansionRate)
+
+
+How to generate Sseg: flush
+How to generate NPseg: compaction
+
+
+Problems:
+1. Once a segment flushed, it will always pick a largest NPseg to merge it with.
+2. Manual Compaction will always generates compaction plans, even one -> one.
