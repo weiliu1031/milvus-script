@@ -9,40 +9,42 @@ Notes:
         1. set the server config: dataCoord.segment.sealProportion = 1
 """
 
+from typing import Union
 from pydantic import BaseModel
-from pymilvus import Collection, connections, utility, DataType
+from pymilvus import Collection, connections, utility, DataType, Partition
 import pymilvus
 import numpy as np
 import uuid
 
 class SegmentDistribution(BaseModel):
     collection_name: str
+    partition_name: str = "_default"
     size_dist: tuple # in bytes (16*1024*1024, 32 * 1024 * 1024)
 
 
 def generate_segments(dist: SegmentDistribution):
-    connections.connect()
 
     if not utility.has_collection(dist.collection_name):
         msg = f"Collection {dist.collection_name} does not exist"
         raise ValueError(msg)
 
     c = Collection(dist.collection_name)
+    p = c.partition(dist.partition_name)
     #  if c.num_entities != 0:
     #      msg = f"Collection {dist.collection_name} has {c.num_entities} entities, please provide an empty collection"
     #      raise ValueError(msg)
 
     pks = []
     for size in dist.size_dist:
-        pks.append(generate_one_segment(c, size))
+        pks.append(generate_one_segment(p, c.schema, size))
 
     return pks
 
 
-def generate_one_segment(c: Collection, size: int) -> list:
-    count = estimate_count_by_size(size, c.schema)
+def generate_one_segment(c: Union[Collection, Partition], schema: pymilvus.CollectionSchema, size: int) -> list:
+    count = estimate_count_by_size(size, schema)
     print(f"generate {count} entities for size: {size}")
-    data = gen_data_by_schema(c.schema, count)
+    data = gen_data_by_schema(schema, count)
 
     ret = c.insert(data)
     c.flush()
@@ -99,4 +101,5 @@ def gen_data_by_schema(schema: pymilvus.CollectionSchema, count: int) -> list:
 
 if __name__ == "__main__":
     dist = [32*1024*1024, 32*1024*1024]
+    connections.connect()
     pks = generate_segments(SegmentDistribution(collection_name="test1", size_dist=(16*1024*1024, 32 * 1024 * 1024)))
