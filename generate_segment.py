@@ -15,11 +15,33 @@ from pymilvus import Collection, connections, utility, DataType, Partition
 import pymilvus
 import numpy as np
 import uuid
+from enum import Enum
+
+
+class Unit(str, Enum):
+    B = "Bytes"
+    KB = "Kilobytes"
+    MB = "Megabytes"
+    GB = "Gigabytes"
+
 
 class SegmentDistribution(BaseModel):
     collection_name: str
     partition_name: str = "_default"
     size_dist: tuple # in bytes (16*1024*1024, 32 * 1024 * 1024)
+    unit: Unit = Unit.B
+
+    def as_bytes(self, size: int) -> int:
+        factor = 1
+        if self.unit == Unit.B:
+            factor = 1
+        elif self.unit == Unit.KB:
+            factor = 1024
+        elif self.unit == Unit.MB:
+            factor = 1024 * 1024
+        elif self.unit == Unit.GB:
+            factor = 1024 * 1024 * 1024
+        return size * factor
 
 
 def generate_segments(dist: SegmentDistribution):
@@ -30,26 +52,44 @@ def generate_segments(dist: SegmentDistribution):
 
     c = Collection(dist.collection_name)
     p = c.partition(dist.partition_name)
-    #  if c.num_entities != 0:
-    #      msg = f"Collection {dist.collection_name} has {c.num_entities} entities, please provide an empty collection"
-    #      raise ValueError(msg)
 
     pks = []
     for size in dist.size_dist:
-        pks.append(generate_one_segment(p, c.schema, size))
+        pks.append(generate_one_segment(p, c.schema, dist.as_bytes(size)))
 
     return pks
 
 
 def generate_one_segment(c: Union[Collection, Partition], schema: pymilvus.CollectionSchema, size: int) -> list:
-    count = estimate_count_by_size(size, schema)
-    print(f"generate {count} entities for size: {size}")
-    data = gen_data_by_schema(schema, count)
+    max_size = 5 * 1024 * 1024
+    total_count = 0
+    pks = []
 
-    ret = c.insert(data)
+    if size > max_size:
+        batch =  size // (5 * 1024 * 1024)
+        tail = size - batch * max_size
+
+        for i in range(batch):
+            count = estimate_count_by_size(max_size, schema)
+            data = gen_data_by_schema(schema, count)
+            rt = c.insert(data)
+            print(f"inserted {max_size * (i+1)}/{size}Bytes entities in batch 5MB, nun rows: {count}")
+            pks.extend(rt.primary_keys)
+            total_count += count
+    else:
+        tail = size
+
+    if tail > 0:
+        count = estimate_count_by_size(tail, schema)
+        data = gen_data_by_schema(schema, count)
+        c.insert(data)
+        print(f"inserted entities size: {tail}Bytes, {tail/1024/1024}MB, nun rows: {count}")
+        pks.extend(rt.primary_keys)
+        total_count += count
+
     c.flush()
-
-    return ret.primary_keys
+    print(f"One segment num rows: {c.num_entities}, size: {size}Bytes, {size/1024/1024}MB")
+    return pks
 
 
 def estimate_count_by_size(size: int, schema: pymilvus.CollectionSchema) -> int:
