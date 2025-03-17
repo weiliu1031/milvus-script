@@ -3,6 +3,7 @@ from pymilvus import connections, FieldSchema, CollectionSchema, DataType, Colle
 import numpy as np
 from pymilvus.bulk_writer import bulk_import, list_import_jobs, RemoteBulkWriter, BulkFileType
 import json, time
+import os
 
 # Configure logging
 logging.basicConfig(
@@ -13,7 +14,8 @@ logging.basicConfig(
 try:
     # 1. Connect to Milvus
     logging.info("Connecting to Milvus server...")
-    connections.connect(host='127.0.0.1', port='19530')
+    host = os.environ.get('MILVUS_HOST', '127.0.0.1')  # Get from environment
+    connections.connect(host=host, port='19530')
     logging.info("Successfully connected to Milvus")
     
     collection_name = "bulk_import_test"
@@ -41,9 +43,10 @@ try:
     SECRET_KEY="minioadmin"
     BUCKET_NAME="a-bucket"
     
-    minio_endpoint = "localhost:9000"  # the default MinIO service started along with Milvus
     remote_path = "/bulk_data/" + time.strftime("%Y-%m-%d-%H-%M-%S")
     url = f"http://127.0.0.1:19530"
+    minio_endpoint = os.environ.get('MINIO_ENDPOINT', 'localhost:9000')
+    url = f"http://{host}:19530"  # Use the same host variable
 
     # Connections parameters to access the remote bucket
     conn = RemoteBulkWriter.S3ConnectParam(

@@ -2,7 +2,7 @@ import nbformat
 import os
 
 # Read Jupyter Notebook file
-notebook_path = "yinlian_poc.ipynb"  # Replace with your file path
+notebook_path = "yl_poc.ipynb"  # Replace with your file path
 with open(notebook_path, "r", encoding="utf-8") as f:
     nb = nbformat.read(f, as_version=4)
 
