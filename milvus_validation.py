@@ -1,5 +1,8 @@
 import logging
-from pymilvus import MilvusClient
+from pymilvus import connections, FieldSchema, CollectionSchema, DataType, Collection, utility
+import numpy as np
+from pymilvus.bulk_writer import bulk_import, list_import_jobs, RemoteBulkWriter, BulkFileType
+import json, time
 
 # Configure logging
 logging.basicConfig(
@@ -7,88 +10,118 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-
 try:
-    # 1. Initialize Milvus Client
-    logging.info("Initializing Milvus client...")
-    client = MilvusClient(
-        uri="http://127.0.0.1:19530",
-        # token='username:password'  # Add if authentication enabled
-    )
+    # 1. Connect to Milvus
+    logging.info("Connecting to Milvus server...")
+    connections.connect(host='127.0.0.1', port='19530')
     logging.info("Successfully connected to Milvus")
-
-    # 2. Cleanup existing collection
-    if client.has_collection("sparse_test"):
-        client.drop_collection("sparse_test")
     
-    # 3. Create collection with sparse vector support
+    collection_name = "bulk_import_test"
+    if utility.has_collection(collection_name):
+        utility.drop_collection(collection_name)
+
+    # 2. Create dense vector collection
     logging.info("Creating collection...")
-    client.create_collection(
-        collection_name="sparse_test",
-        dimension=1,  # Dummy dimension for sparse vectors
-        primary_field_name="id",
-        vector_field_name="vector",
-        id_type="int64",
-        metric_type="IP",
-        vector_type="SPARSE_FLOAT_VECTOR",
-        auto_id=False
+    metric_type = "L2"  # or "IP"
+    
+    
+    schema = CollectionSchema([
+        FieldSchema("id", DataType.INT64, is_primary=True),
+        FieldSchema("vector", DataType.FLOAT_VECTOR, dim=256),
+    ])
+    collection = Collection(
+        collection_name,
+        schema,
+        consistency_level="Strong"
     )
-    logging.info("Collection created: sparse_test")
+    logging.info(f"Collection created: {collection.name}")
+    
+    # Third-party constants
+    ACCESS_KEY="minioadmin"
+    SECRET_KEY="minioadmin"
+    BUCKET_NAME="a-bucket"
+    
+    minio_endpoint = "localhost:9000"  # the default MinIO service started along with Milvus
+    remote_path = "/bulk_data/" + time.strftime("%Y-%m-%d-%H-%M-%S")
+    url = f"http://127.0.0.1:19530"
 
-    # 4. Create index
-    logging.info("Creating sparse index...")
-    client.create_index(
-        collection_name="sparse_test",
-        field_name="vector",
-        index_params={
-            "index_type": "SPARSE_INVERTED_INDEX",
-            "params": {"nlist": 16}
-        }
+    # Connections parameters to access the remote bucket
+    conn = RemoteBulkWriter.S3ConnectParam(
+        endpoint=minio_endpoint,
+        access_key=ACCESS_KEY,
+        secret_key=SECRET_KEY,
+        bucket_name=BUCKET_NAME,
+        secure=False
     )
-    logging.info("Sparse index created")
 
-    # 5. Insert vectors
-    logging.info("Generating and inserting vectors...")
-    sparse_vectors = [
-        {"id": 0, "vector": {1: 0.5, 100: 0.3, 500: 0.8}},
-        {"id": 1, "vector": {10: 0.1, 200: 0.7, 1000: 0.9}},
-        {"id": 2, "vector": {20: 0.2, 300: 0.6, 1500: 0.7}},
-        {"id": 3, "vector": {30: 0.3, 400: 0.5, 2000: 0.8}},
+    writer = RemoteBulkWriter(
+        schema=schema,
+        remote_path=remote_path,
+        connect_param=conn,
+        file_type=BulkFileType.PARQUET
+    )
+    print('bulk writer created.')
+    
+    for i in range(10000):
+        writer.append_row({
+            "id": i,
+            "vector": np.random.randn(256).astype(np.float32).tolist(),
+        })
+        
+        if i+1 % 1000 == 0:
+            writer.commit()
+            print(f'bulk writer flushed {i} rows.')
+            
+    writer.commit()
+    print('bulk writer flushed all rows.')
+    print(writer.batch_files)
+    
+    resp = bulk_import(
+        url,
+        collection_name,
+        files=writer.batch_files,
+    )
+
+    job_id = resp.json()['data']['jobId']
+    print(f'bulk import job id: {job_id}')
+    
+    progress = 0
+    while True:
+        resp = list_import_jobs(
+            url=url,
+            collection_name=collection_name,
+        )
+        new_progress = resp.json()['data']['records'][0]['progress']
+        if new_progress > progress:
+            progress = new_progress
+            print(json.dumps(resp.json(), indent=4))
+        
+        if (resp.json()['data']['records'][0]['jobId'] == job_id) and (new_progress== 100):
+            break
+
+    # 3. Create index and load
+    logging.info("Creating index...")
+    index_params = [
+        ("vector", {"index_type": "HNSW", "metric_type": "L2", "params": {"M": 64, "efConstruction": 128}})
     ]
     
-    client.insert("sparse_test", sparse_vectors)
-    logging.info(f"Inserted {len(sparse_vectors)} vectors")
-
-    # 6. Query validation
-    logging.info("Running query...")
-    query_result = client.query(
-        collection_name="sparse_test",
-        filter="id == 0",
-        output_fields=["vector"]
-    )
+    for field, params in index_params:
+        collection.create_index(field, params)
+    collection.load()
+    logging.info("Index created and collection loaded")
     
-    logging.info("Query results:")
-    for idx, result in enumerate(query_result):
-        logging.info(f"Result {idx}: ID={result['id']}, Vector={result['vector']}")
-
-    # 7. Search validation
-    logging.info("Running search...")
-    search_result = client.search(
-        collection_name="sparse_test",
-        data=[sparse_vectors[0]["vector"]],
-        anns_field="vector",
-        search_params={"params": {"drop_ratio_search": 0.2}},
-        limit=3,
-        output_fields=["vector"]
+    # verify count(*) result
+    res = collection.query(
+        expr="id >= 0",  # Match all records
+        output_fields=["count(*)"],
+        count=True
     )
-    
-    logging.info("Search results:")
-    for idx, hit in enumerate(search_result[0]):
-        logging.info(f"Hit {idx}: ID={hit['id']}, Distance={hit['distance']:.4f}")
+    actual_count = res[0]["count(*)"]
+    logging.info(f"Count(*) result: {actual_count} (Expected: 10000)") 
 
-    # 8. Cleanup
+    # Cleanup
     logging.info("Cleaning up...")
-    client.drop_collection("sparse_test")
+    utility.drop_collection(collection_name)
     logging.info("Collection dropped successfully")
 
 except Exception as e:
