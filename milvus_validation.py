@@ -1,6 +1,5 @@
 import logging
-from pymilvus import connections, FieldSchema, CollectionSchema, DataType, Collection, utility
-import numpy as np
+from pymilvus import MilvusClient
 
 # Configure logging
 logging.basicConfig(
@@ -8,78 +7,88 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
+
 try:
-    # 1. Connect to Milvus
-    logging.info("Connecting to Milvus server...")
-    connections.connect(host='127.0.0.1', port='19530')
+    # 1. Initialize Milvus Client
+    logging.info("Initializing Milvus client...")
+    client = MilvusClient(
+        uri="http://127.0.0.1:19530",
+        # token='username:password'  # Add if authentication enabled
+    )
     logging.info("Successfully connected to Milvus")
 
-    utility.drop_collection("json_test")
-    # 2. Create dense vector collection
+    # 2. Cleanup existing collection
+    if client.has_collection("sparse_test"):
+        client.drop_collection("sparse_test")
+    
+    # 3. Create collection with sparse vector support
     logging.info("Creating collection...")
-    dim = 768
-    metric_type = "L2"  # or "IP"
-    collection = Collection(
-        "json_test",
-        CollectionSchema([
-            FieldSchema("id", DataType.INT64, is_primary=True),
-            FieldSchema("vector", DataType.FLOAT_VECTOR, dim=dim),
-            FieldSchema("metadata", DataType.JSON)
-        ]),
-        consistency_level="Strong"
+    client.create_collection(
+        collection_name="sparse_test",
+        dimension=1,  # Dummy dimension for sparse vectors
+        primary_field_name="id",
+        vector_field_name="vector",
+        id_type="int64",
+        metric_type="IP",
+        vector_type="SPARSE_FLOAT_VECTOR",
+        auto_id=False
     )
-    logging.info(f"Collection created: {collection.name}")
+    logging.info("Collection created: sparse_test")
 
-    # 3. Create index and load
-    logging.info("Creating index...")
-    collection.create_index(
-        "vector",
-        {"index_type": "IVF_FLAT", "metric_type": metric_type, "params": {"nlist": 16}}
+    # 4. Create index
+    logging.info("Creating sparse index...")
+    client.create_index(
+        collection_name="sparse_test",
+        field_name="vector",
+        index_params={
+            "index_type": "SPARSE_INVERTED_INDEX",
+            "params": {"nlist": 16}
+        }
     )
-    collection.load()
-    logging.info("Index created and collection loaded")
+    logging.info("Sparse index created")
 
-    # 4. Insert dense vectors
+    # 5. Insert vectors
     logging.info("Generating and inserting vectors...")
-    vectors = np.random.randn(100, dim).astype(np.float32)
-    data = [
-        list(range(100)),
-        vectors,
-        [{
-            "title": f"doc_{i}",
-            "tags": ["tag1", "tag2"] if i%2 else ["tag3"],
-            "stats": {"views": i*10, "rating": round(np.random.uniform(1, 5), 1)}
-        } for i in range(100)]
+    sparse_vectors = [
+        {"id": 0, "vector": {1: 0.5, 100: 0.3, 500: 0.8}},
+        {"id": 1, "vector": {10: 0.1, 200: 0.7, 1000: 0.9}},
+        {"id": 2, "vector": {20: 0.2, 300: 0.6, 1500: 0.7}},
+        {"id": 3, "vector": {30: 0.3, 400: 0.5, 2000: 0.8}},
     ]
-    collection.insert(data)
+    
+    client.insert("sparse_test", sparse_vectors)
+    logging.info(f"Inserted {len(sparse_vectors)} vectors")
 
-    logging.info(f"Inserted {len(vectors)} vectors")
-
-    # 5. Verify JSON query
-    logging.info("Querying JSON data...")
-    res = collection.query(
-        expr="metadata['title'] == 'doc_0' and metadata['stats']['rating'] > 0",
-        output_fields=["metadata", "id"]
+    # 6. Query validation
+    logging.info("Running query...")
+    query_result = client.query(
+        collection_name="sparse_test",
+        filter="id == 0",
+        output_fields=["vector"]
     )
-    print("\nJSON query results:")
-    for r in res:
-        print(f"ID:{r['id']} | Metadata:{r['metadata']}")
+    
+    logging.info("Query results:")
+    for idx, result in enumerate(query_result):
+        logging.info(f"Result {idx}: ID={result['id']}, Vector={result['vector']}")
 
-    # 6. Verify JSON in search results
-    search_result = collection.search(
-        data[1][:1],  # Use first vector
-        "vector",
-        param={"metric_type": "L2", "params": {"nprobe": 10}},
+    # 7. Search validation
+    logging.info("Running search...")
+    search_result = client.search(
+        collection_name="sparse_test",
+        data=[sparse_vectors[0]["vector"]],
+        anns_field="vector",
+        search_params={"params": {"drop_ratio_search": 0.2}},
         limit=3,
-        output_fields=["metadata"]
+        output_fields=["vector"]
     )
-    print("\nJSON in search results:")
-    for hit in search_result[0]:
-        print(f"ID:{hit.id} | Metadata:{hit.entity.fields['metadata']}")
+    
+    logging.info("Search results:")
+    for idx, hit in enumerate(search_result[0]):
+        logging.info(f"Hit {idx}: ID={hit['id']}, Distance={hit['distance']:.4f}")
 
-    # Cleanup
+    # 8. Cleanup
     logging.info("Cleaning up...")
-    utility.drop_collection("float_vector_test")
+    client.drop_collection("sparse_test")
     logging.info("Collection dropped successfully")
 
 except Exception as e:
