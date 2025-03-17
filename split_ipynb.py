@@ -18,6 +18,7 @@ for cell in nb.cells:
     if cell.cell_type == "markdown":
         # Store Markdown as comments
         markdown_buffer.append("# " + "\n# ".join(cell.source.split("\n")) + "\n")
+        print(f"📝 Markdown cell found: {markdown_buffer[-1]}")
     
     elif cell.cell_type == "code" and cell.source.strip():
         cell_count += 1
