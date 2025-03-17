@@ -1,0 +1,5 @@
+pymilvus
+numpy
+polars
+loguru
+tqdm
